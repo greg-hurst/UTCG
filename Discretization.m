@@ -404,16 +404,34 @@ iParseDistanceBasedCap[r_, h_, p_] :=
 (*parseCrossSection*)
 
 
-parseCrossSection[Automatic, n_] := CirclePoints[{1., 0.}, N[n]]
+parseCrossSection[{csec_, assoc_?AssociationQ}, n_] := 
+	With[{center = Lookup[assoc, "Center", Automatic]},
+		iParseCrossSection[csec, n, center]
+	]
 
 
-parseCrossSection[pts_List, n_] /; MatrixQ[pts, NumericQ] && Last[Dimensions[pts]] === 2 := rescaleCrossSectionPoints[repairCrossSection[subSamplePoints[pts, n]]]
+parseCrossSection[csec_, n_] := iParseCrossSection[csec, n, Automatic]
 
 
-parseCrossSection[mr_?BoundaryMeshRegionQ, n_] /; RegionEmbeddingDimension[mr] === 2 := rescaleCrossSectionPoints[repairCrossSection[subSamplePoints[#, n]& /@ meshComponents[mr]]]
+parseCrossSection[___] = $Failed;
 
 
-parseCrossSection[reg_?ConstantRegionQ, n_] /; RegionEmbeddingDimension[reg] === 2 := 
+iParseCrossSection[Automatic, n_, center_] := 
+	If[Length[center] === 2 && VectorQ[center, Internal`RealValuedNumericQ],
+		CirclePoints[center, {1., 0.}, N[n]],
+		CirclePoints[{1., 0.}, N[n]]
+	]
+
+
+iParseCrossSection[pts_List, n_, center_] /; MatrixQ[pts, NumericQ] && Last[Dimensions[pts]] === 2 := 
+	postProcessCrossSectionPoints[subSamplePoints[pts, n], center]
+
+
+iParseCrossSection[mr_?BoundaryMeshRegionQ, n_, center_] /; RegionEmbeddingDimension[mr] === 2 := 
+	postProcessCrossSectionPoints[subSamplePoints[#, n]& /@ meshComponents[mr], center]
+
+
+iParseCrossSection[reg_?ConstantRegionQ, n_, center_] /; RegionEmbeddingDimension[reg] === 2 := 
 	Block[{len, mr},
 		Quiet @ Switch[RegionDimension[reg],
 			2,
@@ -426,25 +444,27 @@ parseCrossSection[reg_?ConstantRegionQ, n_] /; RegionEmbeddingDimension[reg] ===
 				Return[$Failed]
 		];
 		
-		If[Length[#] === 1, First[#], #]& @ rescaleCrossSectionPoints[repairCrossSection[meshComponents[mr]]]
+		If[Length[#] === 1, First[#], #]& @ postProcessCrossSectionPoints[meshComponents[mr], center]
 	]
 
 
-parseCrossSection[{func_, {a_, b_}}, n_] /; a < b && MatchQ[func[a], {_?NumericQ, _?NumericQ}] := rescaleCrossSectionPoints[repairCrossSection[func /@ Most[Subdivide[N[a], b, n]]]]
+iParseCrossSection[{func_, {a_, b_}}, n_] /; a < b && MatchQ[func[a], {_?NumericQ, _?NumericQ}] := 
+	postProcessCrossSectionPoints[func /@ Most[Subdivide[N[a], b, n]], center]
 
 
-parseCrossSection[func_, n_] /; MatchQ[func[0.], {_?NumericQ, _?NumericQ}] := rescaleCrossSectionPoints[repairCrossSection[func /@ Most[Subdivide[0., 1., n]]]]
+iParseCrossSection[func_, n_, center_] /; MatchQ[func[0.], {_?NumericQ, _?NumericQ}] := 
+	postProcessCrossSectionPoints[func /@ Most[Subdivide[0., 1., n]], center]
 
 
-parseCrossSection[t_Text, n_] :=
+iParseCrossSection[t_Text, n_, center_] :=
 	Block[{bmr},
 		bmr = Quiet[BoundaryDiscretizeGraphics[t, _Text]];
 		
-		parseCrossSection[bmr, n] /; BoundaryMeshRegionQ[bmr]
+		iParseCrossSection[bmr, n, center] /; BoundaryMeshRegionQ[bmr]
 	]
 
 
-parseCrossSection[___] = $Failed;
+iParseCrossSection[___] = $Failed;
 
 
 meshComponents[mr_] := MeshCoordinates /@ UTSingularComponents[mr]
@@ -472,11 +492,18 @@ subSamplePoints[pts_List, n_] /; Length[pts] >= 1 :=
 	]
 
 
-rescaleCrossSectionPoints[pts_] := 
-	Block[{ball, tfunc},
+postProcessCrossSectionPoints[pts_, center_] := rescaleCrossSectionPoints[repairCrossSection[pts], center]
+
+
+rescaleCrossSectionPoints[pts_, center_] := 
+	Block[{ball, c, tfunc},
 		ball = BoundingRegion[If[MatrixQ[pts], pts, Join @@ pts], "MinDisk"];
 		(
-			tfunc = ScalingTransform[{1, 1}/Last[ball]] @* TranslationTransform[-First[ball]];
+			c = If[Length[center] === 2 && VectorQ[center, Internal`RealValuedNumericQ],
+				-center,
+				-First[ball]
+			];
+			tfunc = ScalingTransform[{1, 1}/Last[ball]] @* TranslationTransform[c];
 			If[MatrixQ[pts], 
 				tfunc[pts],
 				tfunc /@ pts
